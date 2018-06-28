@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <title>QR-dinate Alice page.</title>
+    <link href="../style.css" rel="stylesheet"/>
+    <link href="style.css" rel="stylesheet"/>
+    <meta name="viewport" content="width=device-width">
+    <meta name="viewport" content="initial-scale=1.0">
+</head>
+<body>
+<div id="error" class="hidden"></div>
+<div id="intro">
+    <h1>Alice's page</h1>
+    <p>This page acts as one party. This could be an unassociated worker (like 
+    a TV or other general display device), or an associated boss (like a computer
+    screen).</p>
+    <p>It's counter point is a scanning page (like a VR headset, mobile device, or 
+    laptop).</p>
+
+    <h2>First...</h2>
+    <p>On a different device, start the <a class="bob_link">scanner page</a>. Because it's 
+    handy to do so, here's a QR code that's a link to that page:</p>
+    <a hclass="bob_link"><div id="bob_qr"></div></a>
+</div>
+<div id="linkup">
+    <div id="hello">Waiting for the scanner to connect....</div>
+    <div id="qrcode"></div>
+</div>
+<audio src="../common/firefox.mp3" id="ring"></audio>
+<audio src="../common/error.mp3" id="boo"></audio>
+</body>
+<script src="../common/common.js"></script>
+<script src="../common/der_lite.js"></script>
+<script src="../common/base64.js"></script>
+<script src="../common/webpush.js"></script>
+<script src="qrcode.js"></script>
+<script>
+    'use strict';
+
+    let mzcc = new MozCommon();
+    let data = {};
+    let iam = {"name": "Alice", "email": "alice@example.com"};
+    let errs = [];
+    let url = None;
+    let sessionId = None;
+
+    let SocketServer = "localhost:8080";
+    reset();
+
+
+    function activate(id) {
+        try {
+            document.getElementById(id).classList.toggle("undone");
+            test_states[id] = true;
+        }
+        catch (e) {
+            console.warn("Activate failed: " + id + " " +  e.message);
+        }
+    }
+
+    function notify(title, body) {
+        new Notification(title,
+                {
+                    body: body,
+                    icon: "icon.png",
+                });
+    }
+
+    function say(who, says) {
+        let hello = document.getElementById("hello");
+        hello.innerHTML = hello.innerHTML + 
+            "<br><b>"+who+":</b> "+says;
+    }
+
+    function show_results() {
+        let currentLocation = window.location;
+        let status = [];
+        // polyfill for .keys()
+        for (let k in test_states) {
+            if (test_states.hasOwnProperty(k)) {
+                status.push(`${encodeURI(k)}=${encodeURI(test_states[k])}`)
+            }
+        }
+        let state = status.join('&');
+        let err_list = `errs=[${errs.join(', ')}]`;
+        let ok = 'Success';
+        if (errs.length == 0) {
+            ok = 'Failure';
+        }
+        window.history.replaceState({}, ok, `
+            ${currentLocation.pathname}?${state}&${err_list}`);
+    }
+
+    function show_err(msg, e) {
+        let err = document.getElementById("error");
+        if (msg == undefined) {
+            msg = "";
+        }
+        if (msg == false) {
+            err.classList.add("hidden");
+            err.innerHTML = '';
+        } else {
+            if (e != undefined) {
+                msg = `${msg} -> ${e.message}`;
+            }
+            err.innerHTML = msg;
+            err.classList.remove("hidden");
+        }
+        console.error(msg);
+        errs.push(encodeURI(`"${msg}"`));
+        //show_results();
+        document.getElementById("boo").play();
+    }
+
+    function reset() {
+        data = {};
+    }
+
+    navigator.serviceWorker.addEventListener('message', function (event) {
+        console.debug('Service Worker sent:', JSON.stringify(event.data));
+        let mm;
+        if (event.data.type == 'hello') {
+            say(event.data.content.iam.name, "<b><i>CONNECTED</i></b>");
+            data.remote_data = event.data.content;
+            document.getElementById("qrcode").style.display="none";
+            mm = converse.shift();
+        }
+        if (event.data.type == 'content') {
+            say(event.data.content.iam.name, event.data.content.msg);
+            notify(event.data.content.iam.name + " says",
+                event.data.content.msg);
+            mm = converse.shift();
+        }
+        if (mm) {
+            data.msg = JSON.stringify({
+                    "iam": iam,
+                    "msg": mm
+            });
+            say(iam.name, mm);
+            console.debug("sending", data);
+            encrypt(data);
+        } else {
+            document.getElementById("ring").play();
+        }
+    });
+
+    function guid() {
+        // super-fakey UUID4 generator.
+        let uuid = [];
+        for (let i=0; i<32; i++) {
+            uuid.push(Math.floor(Math.random()*16).toString(16));
+        }
+        return uuid.join("");
+    }
+
+    function handleMessage(event) {
+        console.debug(event);
+        if (event.data){
+            if !(url) {
+                sessionId = event.data;
+                url = `http://${SocketServer}/v1/send/${sessionId}`;
+
+            }
+        }
+    }
+
+    function ws_connect() {
+        try {
+            let ws = new WebSocket(`ws://${SocketServer}/ws/`);
+            ws.addEventListener('message', event => handleMessage(event));
+            ws.addEventListener('open', event => ws.send(guid()));
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    function qr_link(loc) {
+        // let path = document.location.pathname.split('/').slice(0,-2).join('/');
+        // let loc = `https://${document.location.host}${path}/bob/`;
+        console.debug(loc);
+        document.getElementsByClassName("bob_link").forEach(l => l.href=loc);
+        new QRCode(
+            document.getElementById("bob_qr"),
+            {
+                text: loc
+            });
+    };
+
+    document.getElementById("continue").addEventListener("click", function(event) {
+        document.getElementById("intro").style.display="none";
+        document.getElementById("linkup").style.display="block";
+        register().then(subscribe());
+    });
+</script>
+</html>
