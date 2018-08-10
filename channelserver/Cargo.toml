@@ -1,6 +1,6 @@
 [package]
 name = "channelserver"
-version = "0.2.1"
+version = "0.3.1"
 authors = ["jr conlin<me+src@jrconlin.com"]
 
 [build]
@@ -21,6 +21,7 @@ env_logger = "*"
 serde = "1.0"
 serde_json = "1.0"
 uuid = { version = "0.6.5", features = ["serde", "v4"] }
+uap-rust = "0.0.4"
 
 slog = "2.2.3"
 slog-async = "2.3.0"

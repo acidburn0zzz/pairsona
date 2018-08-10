@@ -1,10 +1,12 @@
 use std::time::Instant;
+use std::collections::HashMap;
 
 use actix::{
     fut, Actor, ActorContext, ActorFuture, Addr, AsyncContext, ContextFutureSpawner, Handler,
     Running, StreamHandler, WrapFuture,
 };
 use actix_web::ws;
+use serde_json;
 use uuid::Uuid;
 
 use logging;
@@ -27,6 +29,7 @@ pub struct WsChannelSession {
     pub channel: Uuid,
     /// peer name
     pub name: Option<String>,
+    pub meta: HashMap<String, String>,
 }
 
 impl Actor for WsChannelSession {
@@ -117,8 +120,26 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for WsChannelSession {
             ws::Message::Ping(msg) => ctx.pong(&msg),
             ws::Message::Pong(msg) => self.hb = Instant::now(),
             ws::Message::Text(text) => {
-                let m = text.trim();
+                let mut m = text.trim();
+                // parse the incoming message:
+                /*
+                let jdata = serde_json::from_str(m);
+                if jdata.is_err() {
+                    ctx.state().log.do_send(logging::LogMessage {
+                        level: logging::ErrorLevel::Warn,
+                        msg: format!("Could not parse message: {:?}", jdata)
+                    });
+                    ctx.stop();
+                    return
+                }
+
+                
+                // TODO: insert the meta data, which serde_json DOES NOT WANT YOU TO DO.
+                let mut data:HashMap<String, serde_json::Value> = jdata.unwrap();
+                data.insert("meta".to_owned(), serde_json::Map::from(self.meta));
+                m = serde_json::from_value(data);
                 // send message to chat server
+                */
                 ctx.state().addr.do_send(server::ClientMessage {
                     id: self.id,
                     msg: m.to_owned(),

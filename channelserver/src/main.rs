@@ -24,16 +24,16 @@ extern crate slog_async;
 extern crate uuid;
 #[macro_use]
 extern crate slog_term;
+extern crate uap_rust;
 
 use std::path::Path;
 use std::time::Instant;
-//use std::sync::{Arc, Mutex};
-//use std::collections::HashMap;
+use std::collections::HashMap;
 
 use actix::Arbiter;
-//use actix::prelude::{Recipient};
 use actix_web::server::HttpServer;
 use actix_web::{fs, http, ws, App, Error, HttpRequest, HttpResponse};
+use uap_rust::parser::Parser;
 use uuid::Uuid;
 
 mod logging;
@@ -46,6 +46,34 @@ mod settings;
  * based on the Actix websocket example ChatServer
  */
 
+fn get_meta(req: &HttpRequest<session::WsChannelSessionState>) -> Result<HashMap<String, String>, Error> {
+    let mut meta:HashMap<String, String> = HashMap::new();
+    let headers = req.headers();
+    let conn = req.connection_info();
+    println!("Headers: {:?}", headers);
+    println!("Connection: {:?}", conn.remote());
+    // parse user-header for platform info
+    if let Some(user_agent) = headers.get(http::header::USER_AGENT){
+        println!("User-Agent:{:?}", user_agent);
+        let p = Parser::new().unwrap();
+        let info = p.parse(String::from(user_agent.to_str().unwrap()));
+        meta.insert("useragent".to_owned(), String::from(user_agent.to_str().unwrap()));
+        meta.insert("device".to_owned(), info.device.family);
+        meta.insert("os".to_owned(), info.os.family);
+        meta.insert("browser".to_owned(), info.user_agent.family);
+    } else {
+        meta.insert("useragent".to_owned(), "Unknown".to_owned());
+        meta.insert("device".to_owned(), "Unknown".to_owned());
+        meta.insert("os".to_owned(), "Unknown".to_owned());
+        meta.insert("browser".to_owned(), "Unknown".to_owned());
+    }
+    if let Some(remote) = conn.remote() {
+        meta.insert("remote_ip".to_owned(), remote.to_owned());
+        // TODO: fetch location from geoip info 
+    }
+    println!("Meta: {:?}", meta);
+    Ok(meta)
+}
 /// Entry point for our route
 fn channel_route(req: &HttpRequest<session::WsChannelSessionState>) -> Result<HttpResponse, Error> {
     // not sure if it's possible to have actix_web parse the path and have a properly
@@ -59,6 +87,8 @@ fn channel_route(req: &HttpRequest<session::WsChannelSessionState>) -> Result<Ht
         level: logging::ErrorLevel::Info,
         msg: format!("Creating session for channel: \"{}\"", channel.simple()),
     });
+    let meta_info = get_meta(req).unwrap();
+  
     ws::start(
         req,
         session::WsChannelSession {
@@ -66,6 +96,7 @@ fn channel_route(req: &HttpRequest<session::WsChannelSessionState>) -> Result<Ht
             hb: Instant::now(),
             channel: channel.clone(),
             name: None,
+            meta: meta_info,
         },
     )
 }

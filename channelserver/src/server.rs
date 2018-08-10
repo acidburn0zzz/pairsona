@@ -50,12 +50,13 @@ pub struct ClientMessage {
     pub channel: Uuid,
 }
 
-#[derive(Hash, Eq, PartialEq, Clone, Debug)]
+#[derive(Eq, PartialEq, Clone, Debug)]
 pub struct Channel {
     pub id: usize,
     pub started: Instant,
     pub msg_count: u8,
     pub data_exchanged: usize,
+    pub meta: HashMap<String, String>,
 }
 
 /// `ChannelServer` manages chat channels and responsible for coordinating chat
@@ -177,6 +178,7 @@ impl Handler<Connect> for ChannelServer {
             started: Instant::now(),
             msg_count: 0,
             data_exchanged: 0,
+            meta: HashMap::new(),
         };
         {
             self.sessions.insert(new_chan.id, msg.addr.clone());
