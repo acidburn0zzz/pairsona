@@ -24,19 +24,19 @@ extern crate slog_async;
 extern crate uuid;
 #[macro_use]
 extern crate slog_term;
+extern crate maxminddb;
 extern crate uap_rust;
 
 use std::path::Path;
 use std::time::Instant;
-use std::collections::HashMap;
 
 use actix::Arbiter;
 use actix_web::server::HttpServer;
 use actix_web::{fs, http, ws, App, Error, HttpRequest, HttpResponse};
-use uap_rust::parser::Parser;
 use uuid::Uuid;
 
 mod logging;
+mod meta;
 mod perror;
 mod server;
 mod session;
@@ -46,34 +46,6 @@ mod settings;
  * based on the Actix websocket example ChatServer
  */
 
-fn get_meta(req: &HttpRequest<session::WsChannelSessionState>) -> Result<HashMap<String, String>, Error> {
-    let mut meta:HashMap<String, String> = HashMap::new();
-    let headers = req.headers();
-    let conn = req.connection_info();
-    println!("Headers: {:?}", headers);
-    println!("Connection: {:?}", conn.remote());
-    // parse user-header for platform info
-    if let Some(user_agent) = headers.get(http::header::USER_AGENT){
-        println!("User-Agent:{:?}", user_agent);
-        let p = Parser::new().unwrap();
-        let info = p.parse(String::from(user_agent.to_str().unwrap()));
-        meta.insert("useragent".to_owned(), String::from(user_agent.to_str().unwrap()));
-        meta.insert("device".to_owned(), info.device.family);
-        meta.insert("os".to_owned(), info.os.family);
-        meta.insert("browser".to_owned(), info.user_agent.family);
-    } else {
-        meta.insert("useragent".to_owned(), "Unknown".to_owned());
-        meta.insert("device".to_owned(), "Unknown".to_owned());
-        meta.insert("os".to_owned(), "Unknown".to_owned());
-        meta.insert("browser".to_owned(), "Unknown".to_owned());
-    }
-    if let Some(remote) = conn.remote() {
-        meta.insert("remote_ip".to_owned(), remote.to_owned());
-        // TODO: fetch location from geoip info 
-    }
-    println!("Meta: {:?}", meta);
-    Ok(meta)
-}
 /// Entry point for our route
 fn channel_route(req: &HttpRequest<session::WsChannelSessionState>) -> Result<HttpResponse, Error> {
     // not sure if it's possible to have actix_web parse the path and have a properly
@@ -83,12 +55,12 @@ fn channel_route(req: &HttpRequest<session::WsChannelSessionState>) -> Result<Ht
     let mut path: Vec<_> = preq.path().clone().split("/").collect();
     let channel =
         Uuid::parse_str(path.pop().unwrap_or_else(|| "")).unwrap_or_else(|_| Uuid::new_v4());
-    &preq.state().log.do_send(logging::LogMessage {
+    preq.clone().state().log.do_send(logging::LogMessage {
         level: logging::ErrorLevel::Info,
         msg: format!("Creating session for channel: \"{}\"", channel.simple()),
     });
-    let meta_info = get_meta(req).unwrap();
-  
+    let meta_info = meta::SenderData::from(preq.clone());
+
     ws::start(
         req,
         session::WsChannelSession {
@@ -96,7 +68,7 @@ fn channel_route(req: &HttpRequest<session::WsChannelSessionState>) -> Result<Ht
             hb: Instant::now(),
             channel: channel.clone(),
             name: None,
-            meta: meta_info,
+            meta: meta_info.clone(),
         },
     )
 }
@@ -152,22 +124,31 @@ fn main() {
     let logger = logging::MozLogger::new();
     let settings = settings::Settings::new().unwrap();
     let addr = format!("{}:{}", settings.hostname, settings.port);
-    /*
-    let sessions =
-        Arc::new(Mutex::new(HashMap::<usize, Recipient<server::TextMessage>>::new()));
-    let channels =
-        Arc::new(Mutex::new(HashMap::<Uuid, HashMap<usize, server::Channel>>::new()));
-    let server = Arbiter::start(|_| server::ChannelServer::init(channels, sessions));
-    */
     let server = Arbiter::start(|_| server::ChannelServer::default());
     let log = Arbiter::start(|_| logging::MozLogger::default());
-
+    // check that the maxmind db is where it should be.
+    if !Path::new(&settings.mmdb_loc).exists() {
+        slog_error!(
+            logger.log,
+            "Cannot find geoip database: {}",
+            settings.mmdb_loc
+        );
+        return;
+    };
+    let db_loc = settings.mmdb_loc.clone();
     // Create Http server with websocket support
     HttpServer::new(move || {
+        let iploc = maxminddb::Reader::open(&db_loc).unwrap_or_else(|x| {
+            use std::process::exit;
+            println!("Could not read geoip database {:?}", x);
+            exit(1);
+        });
+
         // Websocket sessions state
         let state = session::WsChannelSessionState {
             addr: server.clone(),
             log: log.clone(),
+            iploc,
         };
 
         build_app(App::with_state(state))
@@ -196,10 +177,12 @@ mod test {
         let srv = test::TestServer::build_with_state(|| {
             let server = Arbiter::start(|_| server::ChannelServer::default());
             let log = Arbiter::start(|_| logging::MozLogger::default());
+            let iploc = maxminddb::Reader::open("mmdb/latest/GeoLite2-City.mmdb").unwrap();
 
             session::WsChannelSessionState {
                 addr: server.clone(),
                 log: log.clone(),
+                iploc,
             }
         });
         srv.start(|app| {
@@ -221,13 +204,6 @@ mod test {
 
     #[test]
     fn test_heartbeats() {
-        /*
-        let channels =
-            Arc::new(Mutex::new(HashMap::<Uuid, HashMap<usize, server::Channel>>::new()));
-        let sessions =
-            Arc::new(Mutex::new(HashMap::<usize, Recipient<server::TextMessage>>::new()));
-        let mut srv = get_server(channels.clone(), sessions.clone());
-        */
         let mut srv = get_server();
         // Test the DockerFlow URLs
         {

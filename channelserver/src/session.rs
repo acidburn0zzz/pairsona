@@ -1,15 +1,15 @@
 use std::time::Instant;
-use std::collections::HashMap;
 
 use actix::{
     fut, Actor, ActorContext, ActorFuture, Addr, AsyncContext, ContextFutureSpawner, Handler,
     Running, StreamHandler, WrapFuture,
 };
 use actix_web::ws;
-use serde_json;
+use maxminddb;
 use uuid::Uuid;
 
 use logging;
+use meta::SenderData;
 use server;
 
 /// This is our websocket route state, this state is shared with all route
@@ -17,19 +17,20 @@ use server;
 pub struct WsChannelSessionState {
     pub addr: Addr<server::ChannelServer>,
     pub log: Addr<logging::MozLogger>,
+    pub iploc: maxminddb::Reader,
 }
 
 pub struct WsChannelSession {
     /// unique session id
     pub id: usize,
-    /// Client must send ping at least once per 10 seconds, otherwise we drop
+    /// Client should send ping at least once per 10 seconds, otherwise we drop
     /// connection.
     pub hb: Instant,
     /// joined channel
     pub channel: Uuid,
     /// peer name
     pub name: Option<String>,
-    pub meta: HashMap<String, String>,
+    pub meta: SenderData,
 }
 
 impl Actor for WsChannelSession {
@@ -44,6 +45,7 @@ impl Actor for WsChannelSession {
         // HttpContext::state() is instance of WsChatSessionState, state is shared
         // across all routes within application
         let addr: Addr<Self> = ctx.address();
+        self.meta = SenderData::from(ctx.request().clone());
         ctx.state()
             .addr
             .send(server::Connect {
@@ -84,8 +86,9 @@ impl Actor for WsChannelSession {
         // Broadcast the close to all attached clients.
         ctx.state().addr.do_send(server::ClientMessage {
             id: 0,
-            msg: "\x04".to_owned(),
+            message: "\x04".to_owned(),
             channel: self.channel.clone(),
+            sender: SenderData::default(),
         });
 
         Running::Stop
@@ -121,29 +124,11 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for WsChannelSession {
             ws::Message::Pong(msg) => self.hb = Instant::now(),
             ws::Message::Text(text) => {
                 let mut m = text.trim();
-                // parse the incoming message:
-                /*
-                let jdata = serde_json::from_str(m);
-                if jdata.is_err() {
-                    ctx.state().log.do_send(logging::LogMessage {
-                        level: logging::ErrorLevel::Warn,
-                        msg: format!("Could not parse message: {:?}", jdata)
-                    });
-                    ctx.stop();
-                    return
-                }
-
-                
-                // TODO: insert the meta data, which serde_json DOES NOT WANT YOU TO DO.
-                let mut data:HashMap<String, serde_json::Value> = jdata.unwrap();
-                data.insert("meta".to_owned(), serde_json::Map::from(self.meta));
-                m = serde_json::from_value(data);
-                // send message to chat server
-                */
                 ctx.state().addr.do_send(server::ClientMessage {
                     id: self.id,
-                    msg: m.to_owned(),
+                    message: m.to_owned(),
                     channel: self.channel.clone(),
+                    sender: self.meta.clone(),
                 })
             }
             ws::Message::Binary(bin) => {

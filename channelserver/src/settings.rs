@@ -8,12 +8,13 @@ static PREFIX: &str = "PAIR";
 pub struct Settings {
     pub hostname: String,  // server hostname (localhost)
     pub port: u16,         // server port (18000)
-    pub max_clients: u8,   // Max clients per channel 2
+    pub max_clients: u8,   // Max clients per channel (2)
     pub timeout: u64,      // seconds before channel timeout (300)
     pub max_exchanges: u8, // Max number of messages before channel shutdown (8)
     pub max_data: u64,     // Max amount of data octets to exchange (0 ; unlimited)
-    pub debug: bool,       // In debug mode?
-    pub verbose: bool,     // Verbose Errors?
+    pub debug: bool,       // In debug mode? (false)
+    pub verbose: bool,     // Verbose Errors? (false)
+    pub mmdb_loc: String,  // MaxMind database path ("mmdb/latest/GeoLite2-City.mmdb")
 }
 
 impl Settings {
@@ -28,6 +29,7 @@ impl Settings {
         settings.set_default("max_data", 0)?;
         settings.set_default("port", 8000)?;
         settings.set_default("hostname", "0.0.0.0".to_owned())?;
+        settings.set_default("mmdb_loc", "mmdb/latest/GeoLite2-City.mmdb".to_owned())?;
         // Get the run environment
         let env = env::var("RUN_MODE").unwrap_or("development".to_owned());
         // start with any local config file.

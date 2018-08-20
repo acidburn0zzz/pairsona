@@ -25,6 +25,8 @@ pub enum HandlerErrorKind {
     ExpiredErr,
     #[fail(display = "Channel Shutdown Requested")]
     ShutdownErr,
+    #[fail(display = "Error with GeoIP Database: {:?}", _0)]
+    GeoIPError(String),
 }
 
 /*

@@ -12,6 +12,7 @@ use rand::{self, Rng, ThreadRng};
 use uuid::Uuid;
 
 use logging::MozLogger;
+use meta;
 use perror;
 use settings::Settings;
 
@@ -40,14 +41,16 @@ pub struct Disconnect {
 }
 
 /// Send message to specific channel
-#[derive(Message)]
+#[derive(Message, Serialize, Debug)]
 pub struct ClientMessage {
     /// Id of the client session
     pub id: usize,
     /// Peer message
-    pub msg: String,
+    pub message: String,
     /// channel name
     pub channel: Uuid,
+    /// Sender info
+    pub sender: meta::SenderData,
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]
@@ -210,7 +213,8 @@ impl Handler<Connect> for ChannelServer {
                     chan_id
                 )
             }
-            let group = self.channels
+            let group = self
+                .channels
                 .get_mut(&msg.channel)
                 .expect(&format!("Could not get channels for {}", &chan_id));
             group.insert(id.clone(), new_chan);
@@ -250,7 +254,16 @@ impl Handler<ClientMessage> for ChannelServer {
     type Result = ();
 
     fn handle(&mut self, msg: ClientMessage, _: &mut Context<Self>) {
-        if self.send_message(&msg.channel, msg.msg.as_str(), msg.id)
+        if self
+            .send_message(
+                &msg.channel,
+                json!({
+                "message": &msg.message,
+                "sender": &msg.sender,
+            }).as_str()
+                    .unwrap(),
+                msg.id,
+            )
             .is_err()
         {
             self.shutdown(&msg.channel)
