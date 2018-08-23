@@ -170,9 +170,6 @@ mod test {
     use futures::Stream;
 
     use super::*;
-    // use server::{ChannelCollection, SessionCollection};
-
-    //fn get_server(channels: ChannelCollection, sessions: SessionCollection) -> test::TestServer {
     fn get_server() -> test::TestServer {
         let srv = test::TestServer::build_with_state(|| {
             let server = Arbiter::start(|_| server::ChannelServer::default());

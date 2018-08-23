@@ -22,8 +22,8 @@ pub struct WsChannelSessionState {
 
 pub struct WsChannelSession {
     /// unique session id
-    pub id: usize,
-    /// Client should send ping at least once per 10 seconds, otherwise we drop
+    pub id: server::SessionId,
+    /// Client must send ping at least once per 10 seconds, otherwise we drop
     /// connection.
     pub hb: Instant,
     /// joined channel
@@ -55,12 +55,16 @@ impl Actor for WsChannelSession {
             .into_actor(self)
             .then(|res, act, ctx| {
                 match res {
-                    Ok(res) => {
+                    Ok(session_id) => {
+                        if session_id == 0 {
+                            ctx.stop();
+                            return fut::err(());
+                        }
                         ctx.state().log.do_send(logging::LogMessage {
                             level: logging::ErrorLevel::Debug,
-                            msg: format!("Starting new session [{}]", res),
+                            msg: format!("Starting new session [{:?}]", session_id),
                         });
-                        act.id = res;
+                        act.id = session_id;
                     }
                     // something is wrong with chat server
                     Err(err) => {
@@ -83,14 +87,15 @@ impl Actor for WsChannelSession {
             level: logging::ErrorLevel::Debug,
             msg: format!("Killing session [{:?}]", self.id),
         });
-        // Broadcast the close to all attached clients.
-        ctx.state().addr.do_send(server::ClientMessage {
-            id: 0,
-            message: "\x04".to_owned(),
-            channel: self.channel.clone(),
-            sender: SenderData::default(),
-        });
-
+        if self.id != 0 {
+            // Broadcast the close to all attached clients.
+            ctx.state().addr.do_send(server::ClientMessage {
+                id: 0,
+                message: "\x04".to_owned(),
+                channel: self.channel.clone(),
+                sender: SenderData::default(),
+            });
+        }
         Running::Stop
     }
 }
@@ -138,6 +143,10 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for WsChannelSession {
                 });
             }
             ws::Message::Close(_) => {
+                ctx.state().addr.do_send(server::Disconnect {
+                    id: self.id,
+                    channel: self.channel.clone(),
+                });
                 ctx.state().log.do_send(logging::LogMessage {
                     level: logging::ErrorLevel::Debug,
                     msg: format!("Shutting down session [{}].", self.id),

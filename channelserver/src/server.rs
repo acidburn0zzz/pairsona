@@ -16,18 +16,18 @@ use meta;
 use perror;
 use settings::Settings;
 
-//pub type ChannelCollection = Arc<Mutex<HashMap<Uuid, HashMap<usize, Channel>>>>;
-//pub type SessionCollection = Arc<Mutex<HashMap<usize,Recipient<TextMessage>>>>;
-
 /// Chat server sends this messages to session
 #[derive(Message)]
 pub struct TextMessage(pub String);
 
 /// Message for chat server communications
+/// Individual session identifier
+pub type SessionId = usize;
+pub type ChannelId = usize;
 
 /// New chat session is created
 #[derive(Message)]
-#[rtype(usize)]
+#[rtype(SessionId)]
 pub struct Connect {
     pub addr: Recipient<TextMessage>,
     pub channel: Uuid,
@@ -37,14 +37,14 @@ pub struct Connect {
 #[derive(Message)]
 pub struct Disconnect {
     pub channel: Uuid,
-    pub id: usize,
+    pub id: SessionId,
 }
 
 /// Send message to specific channel
 #[derive(Message, Serialize, Debug)]
 pub struct ClientMessage {
     /// Id of the client session
-    pub id: usize,
+    pub id: SessionId,
     /// Peer message
     pub message: String,
     /// channel name
@@ -55,7 +55,7 @@ pub struct ClientMessage {
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub struct Channel {
-    pub id: usize,
+    pub id: ChannelId,
     pub started: Instant,
     pub msg_count: u8,
     pub data_exchanged: usize,
@@ -65,11 +65,10 @@ pub struct Channel {
 /// `ChannelServer` manages chat channels and responsible for coordinating chat
 /// session. implementation is super primitive
 pub struct ChannelServer {
-    me: usize, // id (to see if threading an issue)
     // collections of sessions grouped by channel
-    channels: HashMap<Uuid, HashMap<usize, Channel>>,
+    channels: HashMap<Uuid, HashMap<ChannelId, Channel>>,
     // individual connections
-    sessions: HashMap<usize, Recipient<TextMessage>>,
+    sessions: HashMap<SessionId, Recipient<TextMessage>>,
     rng: RefCell<ThreadRng>,
     log: MozLogger,
     pub settings: RefCell<Settings>,
@@ -77,9 +76,7 @@ pub struct ChannelServer {
 
 impl Default for ChannelServer {
     fn default() -> ChannelServer {
-        let me = rand::thread_rng().gen::<usize>();
         ChannelServer {
-            me: me,
             channels: HashMap::new(),
             sessions: HashMap::new(),
             rng: RefCell::new(rand::thread_rng()),
@@ -95,14 +92,14 @@ impl ChannelServer {
         &mut self,
         channel: &Uuid,
         message: &str,
-        skip_id: usize,
+        skip_id: SessionId,
     ) -> Result<(), perror::HandlerError> {
         if let Some(participants) = self.channels.get_mut(channel) {
             // show's over, everyone go home.
-            if message == "\04" {
+            if message == "\x04" {
                 for (id, info) in participants {
                     if let Some(addr) = self.sessions.get(id) {
-                        addr.do_send(TextMessage("\04".to_owned())).unwrap_or(());
+                        addr.do_send(TextMessage("\x04".to_owned())).unwrap_or(());
                     }
                 }
                 return Err(perror::HandlerErrorKind::ShutdownErr.into());
@@ -171,30 +168,26 @@ impl Actor for ChannelServer {
 ///
 /// Register new session and assign unique id to this session
 impl Handler<Connect> for ChannelServer {
-    type Result = usize;
+    type Result = SessionId;
 
     fn handle(&mut self, msg: Connect, ctx: &mut Context<Self>) -> Self::Result {
-        let id = self.rng.borrow_mut().gen::<usize>();
+        let session_id = self.rng.borrow_mut().gen::<SessionId>();
         let new_chan = Channel {
             // register session with random id
-            id: id.clone(),
+            id: session_id.clone(),
             started: Instant::now(),
             msg_count: 0,
             data_exchanged: 0,
             meta: HashMap::new(),
         };
-        {
-            self.sessions.insert(new_chan.id, msg.addr.clone());
-        }
+        self.sessions.insert(new_chan.id, msg.addr.clone());
         slog_debug!(
             self.log.log,
-            "New connection to {} for  {} : [{}]",
-            &self.me,
+            "New connection to {}: [{}]",
             &msg.channel.simple(),
             &new_chan.id
         );
 
-        // auto join session to Main channel
         let chan_id = &msg.channel.simple();
         {
             if !self.channels.contains_key(&msg.channel) {
@@ -217,14 +210,22 @@ impl Handler<Connect> for ChannelServer {
                 .channels
                 .get_mut(&msg.channel)
                 .expect(&format!("Could not get channels for {}", &chan_id));
-            group.insert(id.clone(), new_chan);
+            if group.len() >= self.settings.borrow().max_clients.into() {
+                slog_info!(
+                    self.log.log,
+                    "Too many connections requested for channel {}", 
+                    chan_id);
+                self.sessions.remove(&new_chan.id);
+                return 0;
+            }
+            group.insert(session_id.clone(), new_chan);
             slog_debug!(self.log.log, "channel {}: [{:?}]", chan_id, group,);
         }
         // tell the client what their channel is.
         &msg.addr.do_send(TextMessage(format!("/v1/ws/{}", chan_id)));
 
         // send id back
-        id
+        session_id
     }
 }
 
@@ -238,12 +239,6 @@ impl Handler<Disconnect> for ChannelServer {
             "Connection dropped for {} : {}",
             &msg.channel.simple(),
             &msg.id
-        );
-        slog_debug!(
-            self.log.log,
-            "Session had id {}:{}",
-            &msg.id,
-            self.sessions.contains_key(&msg.id)
         );
         self.shutdown(&msg.channel);
     }
