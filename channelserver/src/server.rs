@@ -220,7 +220,10 @@ impl Handler<Connect> for ChannelServer {
             debug!(self.log.log, "channel {}: [{:?}]", chan_id, group,);
         }
         // tell the client what their channel is.
-        &msg.addr.do_send(TextMessage(format!("/v1/ws/{}", chan_id)));
+        let jpath = json!({
+            "link": format!("/v1/ws/{}", chan_id)
+        });
+        &msg.addr.do_send(TextMessage(jpath.to_string()));
 
         // send id back
         session_id
@@ -247,14 +250,16 @@ impl Handler<ClientMessage> for ChannelServer {
     type Result = ();
 
     fn handle(&mut self, msg: ClientMessage, _: &mut Context<Self>) {
+        if &msg.message == "\x04" {
+            self.shutdown(&msg.channel)
+        }
         if self
             .send_message(
                 &msg.channel,
-                json!({
-                "message": &msg.message,
-                "sender": &msg.sender,
-            }).as_str()
-                    .unwrap(),
+                &json!({
+                    "message": &msg.message,
+                    "sender": &msg.sender,
+                }).to_string(),
                 msg.id,
             )
             .is_err()

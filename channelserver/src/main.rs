@@ -242,7 +242,7 @@ mod test {
         //
         // for now, use the ../test_chan
         let mut srv = get_server();
-        let (mut reader1, mut writer1) = srv.ws_at("/v1/ws/").unwrap();
+        let (mut reader1, writer1) = srv.ws_at("/v1/ws/").unwrap();
         let (item, r) = srv.execute(reader1.into_future()).unwrap();
         reader1 = r;
         let link_addr = read(item.unwrap());
