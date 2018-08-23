@@ -210,9 +210,6 @@ mod test {
             let request = srv.get().uri(srv.url("/__lbheartbeat__")).finish().unwrap();
             let response = srv.execute(request.send()).unwrap();
             assert!(response.status().is_success());
-            let bytes = srv.execute(response.body()).unwrap();
-            let body = str::from_utf8(&bytes).unwrap();
-            assert_eq!("{}", body);
         }
         {
             let request = srv.get().uri(srv.url("/__version__")).finish().unwrap();
