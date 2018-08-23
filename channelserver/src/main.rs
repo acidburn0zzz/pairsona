@@ -51,15 +51,14 @@ fn channel_route(req: &HttpRequest<session::WsChannelSessionState>) -> Result<Ht
     // not sure if it's possible to have actix_web parse the path and have a properly
     // scoped request, since the calling structure is different for the two, so
     // manually extracting the id from the path.
-    let preq = req.clone();
-    let mut path: Vec<_> = preq.path().clone().split("/").collect();
+    let mut path: Vec<_> = req.path().split("/").collect();
     let channel =
         Uuid::parse_str(path.pop().unwrap_or_else(|| "")).unwrap_or_else(|_| Uuid::new_v4());
-    preq.clone().state().log.do_send(logging::LogMessage {
+    &req.state().log.do_send(logging::LogMessage {
         level: logging::ErrorLevel::Info,
         msg: format!("Creating session for channel: \"{}\"", channel.simple()),
     });
-    let meta_info = meta::SenderData::from(preq.clone());
+    let meta_info = meta::SenderData::from(req.clone());
 
     ws::start(
         req,
@@ -83,9 +82,7 @@ fn heartbeat(req: &HttpRequest<session::WsChannelSessionState>) -> Result<HttpRe
 
 fn lbheartbeat(req: &HttpRequest<session::WsChannelSessionState>) -> Result<HttpResponse, Error> {
     // load balance heartbeat. Doesn't matter what's returned, aside from a 200
-    Ok(HttpResponse::Ok()
-        .content_type("application/json")
-        .body("{}"))
+    Ok(HttpResponse::Ok().into())
 }
 
 fn show_version(req: &HttpRequest<session::WsChannelSessionState>) -> Result<HttpResponse, Error> {
@@ -97,11 +94,6 @@ fn show_version(req: &HttpRequest<session::WsChannelSessionState>) -> Result<Htt
 
 fn build_app(app: App<session::WsChannelSessionState>) -> App<session::WsChannelSessionState> {
     let mut mapp = app
-            // redirect to websocket.html
-            .resource("/", |r| r.method(http::Method::GET).f(|_| {
-                HttpResponse::NotFound()
-                    .finish()
-            }))
             // websocket to an existing channel
             .resource("/v1/ws/{channel}", |r| r.route().f(channel_route))
             // connecting to an empty channel creates a new one.
@@ -156,7 +148,7 @@ fn main() {
         .unwrap()
         .start();
 
-    slog_info!(logger.log, "Started http server: {}\n{:?}", addr, settings);
+    info!(logger.log, "Started http server: {}\n{:?}", addr, settings);
     let _ = sys.run();
 }
 

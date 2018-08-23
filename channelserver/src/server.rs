@@ -59,7 +59,6 @@ pub struct Channel {
     pub started: Instant,
     pub msg_count: u8,
     pub data_exchanged: usize,
-    pub meta: HashMap<String, String>,
 }
 
 /// `ChannelServer` manages chat channels and responsible for coordinating chat
@@ -106,13 +105,13 @@ impl ChannelServer {
             }
             for party in participants.values_mut() {
                 if party.started.elapsed().as_secs() > self.settings.borrow().timeout {
-                    slog_info!(self.log.log, "Connection {} expired, closing", channel);
+                    info!(self.log.log, "Connection {} expired, closing", channel);
                     return Err(perror::HandlerErrorKind::ExpiredErr.into());
                 }
                 let max_data: usize = self.settings.borrow().max_data as usize;
                 let msg_len = message.len();
                 if max_data > 0 && (party.data_exchanged > max_data || msg_len > max_data) {
-                    slog_info!(
+                    info!(
                         self.log.log,
                         "Too much data sent through {}, closing",
                         channel
@@ -123,7 +122,7 @@ impl ChannelServer {
                 let msg_count = u8::from(self.settings.borrow().max_exchanges);
                 party.msg_count += 1;
                 if msg_count > 0 && party.msg_count > msg_count {
-                    slog_info!(
+                    info!(
                         self.log.log,
                         "Too many messages through {}, closing",
                         channel
@@ -178,10 +177,9 @@ impl Handler<Connect> for ChannelServer {
             started: Instant::now(),
             msg_count: 0,
             data_exchanged: 0,
-            meta: HashMap::new(),
         };
         self.sessions.insert(new_chan.id, msg.addr.clone());
-        slog_debug!(
+        debug!(
             self.log.log,
             "New connection to {}: [{}]",
             &msg.channel.simple(),
@@ -191,7 +189,7 @@ impl Handler<Connect> for ChannelServer {
         let chan_id = &msg.channel.simple();
         {
             if !self.channels.contains_key(&msg.channel) {
-                slog_debug!(
+                debug!(
                     self.log.log,
                     "Creating new channel set {}: [{}]",
                     chan_id,
@@ -199,19 +197,19 @@ impl Handler<Connect> for ChannelServer {
                 );
                 self.channels.insert(msg.channel, HashMap::new());
             } else {
-                slog_debug!(
+                debug!(
                     self.log.log,
                     "Adding session [{}] to existing channel set {}",
                     &new_chan.id,
                     chan_id
                 )
             }
-            let group = self
-                .channels
-                .get_mut(&msg.channel)
-                .expect(&format!("Could not get channels for {}", &chan_id));
+            // we've already checked and created this, so calling unwrap 
+            // should be safe. Creating here hits lifetime exceptions as
+            // well.
+            let group = self.channels.get_mut(&msg.channel).unwrap();
             if group.len() >= self.settings.borrow().max_clients.into() {
-                slog_info!(
+                info!(
                     self.log.log,
                     "Too many connections requested for channel {}", 
                     chan_id);
@@ -219,7 +217,7 @@ impl Handler<Connect> for ChannelServer {
                 return 0;
             }
             group.insert(session_id.clone(), new_chan);
-            slog_debug!(self.log.log, "channel {}: [{:?}]", chan_id, group,);
+            debug!(self.log.log, "channel {}: [{:?}]", chan_id, group,);
         }
         // tell the client what their channel is.
         &msg.addr.do_send(TextMessage(format!("/v1/ws/{}", chan_id)));
@@ -234,7 +232,7 @@ impl Handler<Disconnect> for ChannelServer {
     type Result = ();
 
     fn handle(&mut self, msg: Disconnect, ctx: &mut Context<Self>) {
-        slog_debug!(
+        debug!(
             self.log.log,
             "Connection dropped for {} : {}",
             &msg.channel.simple(),
